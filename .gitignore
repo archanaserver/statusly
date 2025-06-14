@@ -1,0 +1,13 @@
+# Virtual environment
+venv/
+.env
+.env.*
+
+# Statusly logs
+.statusly/
+~/.statusly/
+*.log
+*.json
+
+# VSCode 
+.vscode/
