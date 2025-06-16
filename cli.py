@@ -1,8 +1,18 @@
 import typer
-from typing import Optional, List
-from datetime import date
-import json
 import os
+import json
+from typing import Optional, List
+from datetime import date, datetime, timedelta
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from openai import OpenAI
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    typer.echo("OPENAI_API_KEY is not set. Please set it in your .env file.")
+    raise typer.Exit()
+client = OpenAI(api_key=api_key)
 
 app = typer.Typer()
 log_app = typer.Typer()
@@ -49,7 +59,7 @@ def add(
         log_data.setdefault("misc", []).extend(misc)
 
     save_log(log_date, log_data)
-    typer.echo(f"✅ Log updated for {log_date}")
+    typer.echo(f"Log updated for {log_date}")
 
 @app.command()
 def show(
@@ -64,10 +74,10 @@ def show(
         log_data.get("blocker", []),
         log_data.get("misc", [])
     ]):
-        typer.echo(f"📭 No log found for {log_date}")
+        typer.echo(f"No log found for {log_date}")
         return
 
-    typer.echo(f"\n📓 Log for {log_date}:\n")
+    typer.echo(f"\nLog for {log_date}:\n")
     if log_data.get("doing"):
         typer.echo("DOING:")
         for item in log_data["doing"]:
@@ -85,6 +95,61 @@ def show(
         for item in log_data["misc"]:
             typer.echo(f"  • {item}")
     typer.echo("")
+
+@app.command()
+def ai_summary(
+    start_date: str = typer.Option(..., help="Start date in YYYY-MM-DD"),
+    end_date: str = typer.Option(..., help="End date in YYYY-MM-DD")
+):
+    """Use AI to summarize your work logs between two dates."""
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        typer.echo("Invalid date format. Use YYYY-MM-DD.")
+        raise typer.Exit()
+
+    if end < start:
+        typer.echo("End date cannot be before start date.")
+        raise typer.Exit()
+
+    combined_logs = {"doing": set(), "done": set(), "blocker": set()}
+    current = start
+    while current <= end:
+        log_data = load_log(str(current))
+        for key in combined_logs:
+            combined_logs[key].update(log_data.get(key, []))
+        current += timedelta(days=1)
+
+    if not any(combined_logs.values()):
+        typer.echo("No logs found in the given date range.")
+        raise typer.Exit()
+
+    summary_text = ""
+    for section in ["doing", "done", "blocker"]:
+        if combined_logs[section]:
+            summary_text += f"{section.upper()}:\n"
+            for item in sorted(combined_logs[section]):
+                summary_text += f"• {item}\n"
+            summary_text += "\n"
+
+    typer.echo("Sending logs to OpenAI for summarization...\n")
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes developer logs into bullet points grouped by section. Group semantically similar tasks into one bullet point. Use markdown with sections for DOING, DONE, and BLOCKER. Do not include MISC"},
+                {"role": "user", "content": f"Summarize the following developer logs into three sections: ##doing, ##done, ##blocker. Keep it concise and in bullet points. Ignore MISC: {summary_text}"}
+            ]
+        )
+        summary = response.choices[0].message.content
+        today_str = str(date.today())
+        typer.echo(f"Status {today_str}:\n")
+        typer.echo(summary)
+
+    except Exception as e:
+        typer.echo(f"Failed to call OpenAI: {e}")
 
 if __name__ == "__main__":
     app()
