@@ -1,6 +1,7 @@
 import typer
 import os
 import json
+import requests
 from typing import Optional, List
 from datetime import date, datetime, timedelta
 
@@ -96,6 +97,31 @@ def show(
             typer.echo(f"  • {item}")
     typer.echo("")
 
+def fetch_github_activity(start_date: str, end_date: str):
+    token = os.getenv("GITHUB_TOKEN")
+    username = os.getenv("GITHUB_USERNAME")
+    headers = {"Authorization": f"token {token}"}
+    doing = []
+    done = []
+
+    # Pull Requests Opened
+    pr_url = f"https://api.github.com/search/issues?q=author:{username}+type:pr+created:{start_date}..{end_date}"
+    pr_response = requests.get(pr_url, headers=headers).json()
+    for item in pr_response.get("items", []):
+        title = item["title"]
+        url = item["html_url"]
+        doing.append(f"Opened PR: [{title}]({url})")
+
+    # Pull Requests Reviewed
+    review_url = f"https://api.github.com/search/issues?q=commenter:{username}+type:pr+updated:{start_date}..{end_date}"
+    review_response = requests.get(review_url, headers=headers).json()
+    for item in review_response.get("items", []):
+        title = item["title"]
+        url = item["html_url"]
+        done.append(f"Reviewed PR: [{title}]({url})")
+
+    return {"doing": doing, "done": done}
+
 @app.command()
 def ai_summary(
     start_date: str = typer.Option(..., help="Start date in YYYY-MM-DD"),
@@ -120,6 +146,11 @@ def ai_summary(
         for key in combined_logs:
             combined_logs[key].update(log_data.get(key, []))
         current += timedelta(days=1)
+
+    # Fetch GitHub activity and merge with logs
+    github_logs = fetch_github_activity(start_date, end_date)
+    combined_logs["doing"].update(github_logs["doing"])
+    combined_logs["done"].update(github_logs["done"])
 
     if not any(combined_logs.values()):
         typer.echo("No logs found in the given date range.")
